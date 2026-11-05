@@ -48,7 +48,7 @@ i.da{background:var(--pri)}i.db{background:#e67e22}
 <script>
 const TABS=[["jogos","⚽ Jogos"],["paes","🥖 Pães"],["prendas","🎂 Aniversários"],["torneio","🏆 Torneio"],["fotos","📷 Fotos"],["perfil","👤 Perfil"]];
 let tab="jogos",db,user,assets,uid=null,isAdmin=false;
-const S={settings:{},consents:[],bdays:[],gopts:[],gvotes:[],prefs:[],fams:[],kids:[],games:[],gifts:[],contribs:[],venues:[],votes:[],bread:[],photos:[]},N={};
+const S={settings:{},consents:[],bdays:[],gopts:[],gvotes:[],prefs:[],fams:[],children:[],kids:[],games:[],gifts:[],contribs:[],venues:[],votes:[],bread:[],photos:[]},N={};
 const $=s=>document.querySelector(s);
 let pend="";
 function toast(m){let e=$("#toast");if(!e){e=document.createElement("div");e.id="toast";e.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:#222;color:#fff;padding:12px 14px;border-radius:12px;z-index:20;text-align:center";document.body.appendChild(e)}e.textContent=m;e.hidden=false;clearTimeout(e._t);e._t=setTimeout(()=>e.hidden=true,3500)}
@@ -74,7 +74,7 @@ function draw(){if(window.HOLD)return;
 }
 
 async function resolveNames(){
-  const ids=[...S.contribs,...S.bread,...S.photos,...S.consents.map(c=>({uid:c.id}))].map(x=>x.uid).filter(i=>i&&!N[i]);
+  const ids=[...S.contribs,...S.bread,...S.photos,...S.consents.map(c=>({uid:c.id})),...S.children.flatMap(c=>(c.guardians||[]).map(u=>({uid:u})))].map(x=>x.uid).filter(i=>i&&!N[i]);
   if(!ids.length||!user)return;
   try{const p=await user.profiles([...new Set(ids)]);let ch=false;
     for(const i of new Set(ids)){const n=p[i]&&p[i].name;N[i]=n||"Pai/Mãe";ch=true}
@@ -89,11 +89,11 @@ const ekn=x=>canon(String(x||"").split("-")[0]);
 const catLabel=k=>CATS.find(x=>canon(x)==k)||k;
 let fm="meus",pk="";
 const cekey=c=>canon(c);
-const myKids=()=>((S.fams.find(f=>f.id==uid)||{}).children||[]);
+const myKids=()=>S.children.filter(c=>(c.guardians||[]).includes(uid));
 const joinN=n=>n.length>1?n.slice(0,-1).join(", ")+" e "+n[n.length-1]:n[0];
 const famLabelFrom=ch=>"Pais do "+joinN(ch.map(c=>c.name));
 function famLabel(u,ek){const f=S.fams.find(x=>x.id==u),ch=((f&&f.children)||[]).filter(c=>cekey(c.cat,c.team)==ek);return ch.length?famLabelFrom(ch):"Pais de "+nm(u)}
-function kidLabel(b){if(b.ek)return famLabel(b.uid,b.ek);const k=S.kids.find(x=>x.id==b.kid);return k?"Pais do "+k.name:nm(b.uid)}
+function kidLabel(b){if(b.kids){const ns=b.kids.map(id=>(S.children.find(c=>c.id==id)||{}).name).filter(Boolean);if(ns.length)return "Pais do "+joinN(ns)}if(b.ek)return famLabel(b.uid,b.ek);const k=S.kids.find(x=>x.id==b.kid);return k?"Pais do "+k.name:nm(b.uid)}
 function myEk(g){const has=(g.players||"").trim(),k=myKids().find(c=>canon(c.cat)==canon(g.cat||c.cat)&&(!has||conv(g,c)));return k?canon(k.cat):""}
 function myEkOld(g){const k=myKids().find(c=>String(c.team).toUpperCase()==String(g.team).toUpperCase()&&(!g.cat||norm(g.cat)==norm(c.cat)));return k?cekey(k.cat,k.team):""}
 function visGames(){const mk=myKids();if(fm!="meus"||!mk.length)return S.games;
@@ -113,7 +113,7 @@ function perfilOld(){
   <button class="b" data-a="addChild">Adicionar</button>
   <div class="mu" style="margin-top:8px">A equipa (A ou B) é decidida pelo Mister em cada convocatória. Dois filhos no mesmo escalão aparecem como "Pais do [nome] e [nome]". Com filhos em escalões diferentes, vê os jogos de todos.</div></div>`;
 }
-function ents(ek){
+function entsLegacy(ek){
   const out=[],used=new Set(),seen=new Set(),al=k=>[k.name,...(k.alias||[])].map(norm);
   S.fams.forEach(f=>{const ch=(f.children||[]).filter(c=>cekey(c.cat,c.team)==ek);if(!ch.length)return;
     const keys=[f.id+"|"+ek];let base=0;ch.forEach(c=>seen.add(norm(c.name)));
@@ -137,7 +137,7 @@ function entsOld(ek){
   return out.map(e=>({...e,n:e.base+S.bread.filter(b=>e.keys.includes(b.ek?b.uid+"|"+b.ek:"k|"+b.kid)).length}));
 }
 function eks(){const m={};
-  S.fams.forEach(f=>(f.children||[]).forEach(c=>m[canon(c.cat)]=1));
+  S.children.forEach(c=>m[canon(c.cat)]=1);
   S.games.forEach(g=>{if(g.cat)m[canon(g.cat)]=1});
   S.kids.forEach(k=>{if(k.ek)m[k.ek]=1});
   const mine=myKids().map(c=>canon(c.cat));
@@ -179,6 +179,73 @@ function paesOld(){
 }
 
 /* ---------- JOGOS ---------- */
+/* ---------- RESPONSÁVEIS E FILHOS ---------- */
+let childrenReady=false,migBusy=false;
+const newCode=()=>Array.from({length:6},()=>"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random()*32)]).join("");
+const hhSet=()=>new Set([uid,...S.children.filter(c=>(c.guardians||[]).includes(uid)).flatMap(c=>c.guardians||[])]);
+function eligible(g){const has=(g.players||"").trim();return myKids().filter(c=>canon(c.cat)==canon(g.cat||c.cat)&&(!has||conv(g,c)))}
+function breadBtn(g){const el=eligible(g);
+  if(el.length<2)return `<button class="b" data-a="bread" data-id="${g.id}">Eu levo</button>`;
+  return `<span style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><span id="bk-${g.id}" class="chips" style="margin:0">${el.map(c=>`<label class="chip" style="display:flex;gap:6px;align-items:center"><input type="checkbox" style="width:auto;margin:0" checked data-bk="${c.id}"> ${esc(c.name)}</label>`).join("")}</span><button class="b" data-a="bread" data-id="${g.id}">Eu levo (pelos selecionados)</button></span>`}
+async function joinLocal(code){const c=S.children.find(x=>String(x.code).toUpperCase()==code);if(!c)return null;
+  if(!(c.guardians||[]).includes(uid))await db.collection("children").doc(c.id).update({guardians:[...(c.guardians||[]),uid]});return c.name}
+async function migrateLegacy(){
+  if(migBusy||!childrenReady||!uid||!db)return;const f=S.fams.find(x=>x.id==uid);if(!f||!(f.children||[]).length)return;migBusy=true;
+  try{for(const c of f.children){const dup=S.children.find(x=>norm(x.name)==norm(c.name)&&canon(x.cat)==canon(c.cat));
+      if(dup){if(!(dup.guardians||[]).includes(uid))await db.collection("children").doc(dup.id).update({guardians:[...(dup.guardians||[]),uid]})}
+      else{const code=newCode();await db.collection("children").doc("c-"+slug(c.name)+"-"+code.toLowerCase()).set({name:c.name,cat:c.cat,code,guardians:[uid],t:Date.now()})}}
+    await db.collection("families").doc(uid).set({children:[]})}catch(e){}
+  migBusy=false}
+function perfilKids(){
+  if(!uid)return '<div class="empty">Inicie sessão para gerir o seu perfil.</div>';
+  const mk=myKids();
+  return `<div class="card"><b>Os meus filhos</b>${mk.map(c=>`<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--bd)"><div class="row"><span>${esc(c.name)} <span class="tag">${esc(c.cat)}</span></span><button class="b o" data-a="unlink" data-id="${c.id}">Sair</button></div>
+  <div class="mu">Responsáveis: ${esc((c.guardians||[]).map(nm).join(", "))}</div>
+  <div class="mu">Código para convidar outro responsável: <b>${esc(c.code)}</b></div></div>`).join("")||'<div class="mu">Ainda sem filhos registados.</div>'}</div>
+  <div class="card"><b>Adicionar filho/a</b><input id="c-name" placeholder="Nome (ex.: Rui Santos)"><select id="c-cat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select><button class="b" data-a="addChild">Adicionar</button>
+  <div class="mu" style="margin-top:8px">A equipa (A ou B) é decidida pelo Mister em cada convocatória.</div></div>
+  <div class="card"><b>Associar a um menino já registado</b><div class="mu" style="margin:6px 0">O outro pai/mãe (ou a pessoa com quem vive) dá-lhe o código do menino. Assim ficam os dois ligados ao mesmo filho, sem duplicar o menino.</div>
+  <input id="c-code" placeholder="Código (ex.: 7KQ2MD)" style="text-transform:uppercase"><button class="b" data-a="joinChild">Associar</button></div>
+  <div class="card"><div class="mu">Pais separados: cada um usa a sua conta e liga-se ao mesmo menino. Se vive com alguém que também tem filhos no clube, associe-se também a esses meninos com o código deles: os pães que levar contam para todos os selecionados.</div></div>`;
+}
+function ents(ek){
+  const out=[],used=new Set(),seen=new Set(),al=k=>[k.name,...(k.alias||[])].map(norm);
+  const ch=S.children.filter(c=>canon(c.cat)==ek),gk=c=>[...(c.guardians||[])].sort().join("+")||c.id,groups={};
+  ch.forEach(c=>(groups[gk(c)]=groups[gk(c)]||[]).push(c));
+  Object.values(groups).forEach(g=>{
+    const ids=g.map(c=>c.id),gu=new Set(g.flatMap(c=>c.guardians||[]));let base=0;
+    g.forEach(c=>seen.add(norm(c.name)));
+    S.kids.filter(k=>k.ek==ek).forEach(k=>{if(used.has(k.id))return;if(g.some(c=>al(k).includes(norm(c.name)))){used.add(k.id);al(k).forEach(a=>seen.add(a));base+=k.base||0}});
+    const n=base+S.bread.filter(b=>(b.kids||[]).some(x=>ids.includes(x))||(b.ek&&ekn(b.ek)==ek&&gu.has(b.uid))).length;
+    out.push({label:"Pais do "+joinN(g.map(c=>c.name)),n,mine:gu.has(uid)})});
+  const roster=[...new Set(S.games.filter(g=>cekey(g.cat,g.team)==ek).flatMap(g=>(g.players||"").split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)))];
+  roster.forEach(name=>{const n=norm(name);if(seen.has(n))return;
+    const k=S.kids.find(k=>k.ek==ek&&!used.has(k.id)&&al(k).includes(n));
+    if(k){used.add(k.id);al(k).forEach(a=>seen.add(a));out.push({label:"Pais do "+k.name,n:k.base||0})}else{seen.add(n);out.push({label:"Pais do "+name,n:0})}});
+  S.kids.filter(k=>k.ek==ek&&!used.has(k.id)&&k.base).forEach(k=>out.push({label:"Pais do "+k.name,n:k.base}));
+  return out;
+}
+
+/* ---------- FOTOGRAFIAS POR JOGO ---------- */
+const PCATS=["Treino","Torneio","Convívio","Outros"];
+const gDate=g=>g.date?new Date(g.date+"T12:00").toLocaleDateString("pt-PT",{day:"numeric",month:"short"}):"";
+function fotosBody(){
+  const gs=[...S.games].sort((a,b)=>((b.date||"")+(b.time||"")).localeCompare((a.date||"")+(a.time||"")));
+  const ids=new Set(gs.map(g=>g.id)),by={};
+  [...S.photos].sort((a,b)=>b.t-a.t).forEach(p=>{const k=p.game&&ids.has(p.game)?"g:"+p.game:"c:"+(PCATS.includes(p.cat)?p.cat:"Outros");(by[k]=by[k]||[]).push(p)});
+  const tile=p=>`<div><img loading="lazy" src="${img(p.asset)}" alt=""><div class="mu">${esc(nm(p.uid))}${(p.uid==uid||isAdmin)?` · <a href="#fotos" data-a="del" data-c="photos" data-id="${p.id}">apagar</a>`:""}</div></div>`;
+  const sec=(head,sub,arr)=>`<div class="row" style="margin:20px 0 8px"><span>${head}</span><span class="mu">${sub?sub+" · ":""}${arr.length} ${arr.length==1?"foto":"fotos"}</span></div><div class="grid">${arr.map(tile).join("")}</div>`;
+  let out="";
+  gs.forEach(g=>{const a=by["g:"+g.id];if(a)out+=sec(gtitle(g),gDate(g),a)});
+  PCATS.forEach(c=>{const a=by["c:"+c];if(a)out+=sec(`<b>${c}</b>`,"",a)});
+  const opt=gs.map(g=>`<option value="g:${g.id}">${esc(gDate(g))} · ${gtitle(g).replace(/<[^>]+>/g,"")}</option>`).join("");
+  return `<div class="card"><b>Partilhar fotografias</b>
+  <label class="mu">A que jogo ou categoria pertencem?</label>
+  <select id="up-cls"><option value="">Escolha o jogo ou a categoria…</option>${opt?`<optgroup label="Jogos">${opt}</optgroup>`:""}<optgroup label="Categorias">${PCATS.map(c=>`<option value="c:${c}">${c}</option>`).join("")}</optgroup></select>
+  <input id="up" type="file" accept="image/*" multiple>
+  <button class="b" data-a="upload" style="margin-top:6px">Enviar</button><div id="upmsg" class="mu"></div></div>`+(out||'<div class="empty">Ainda sem fotografias.</div>');
+}
+
 /* ---------- CONSENTIMENTO RGPD ---------- */
 const CONSENT_V=1;let myC,showC=false;
 function consentHtml(){return `<div class="card" style="border-color:var(--pri)"><b>🔒 Consentimento para fotografias (RGPD)</b>
@@ -198,14 +265,14 @@ function consentCard(){if(!uid)return "";const c=myC,st=c?(c.photos?`✅ Aceite 
 function fotos(){
   if(!uid)return '<div class="empty">Inicie sessão para ver as fotografias.</div>';
   if(!(myC&&myC.photos))return `<div class="card"><b>📷 Fotografias</b><div class="mu" style="margin:8px 0">O acesso a esta secção requer o consentimento dos encarregados de educação para o alojamento de fotografias.${myC&&myC.photos===false?" Recusou ou retirou esse consentimento.":""}</div><button class="b" data-a="cShow">Ver e dar consentimento</button></div>`;
-  return fotosOld();
+  return fotosBody();
 }
-function perfil(){return perfilOld()+consentCard()+(uid?`<div class="card"><button class="b o" data-a="logout">Terminar sessão</button></div>`:"")}
+function perfil(){return perfilKids()+consentCard()+(uid?`<div class="card"><button class="b o" data-a="logout">Terminar sessão</button></div>`:"")}
 
 /* ---------- ANIVERSÁRIOS ---------- */
 const fmtM=d=>d.toLocaleDateString("pt-PT",{day:"numeric",month:"long"});
 const addD=(x,k)=>new Date(x.getFullYear(),x.getMonth(),x.getDate()+k);
-const famAny=u=>{const f=S.fams.find(x=>x.id==u),ch=(f&&f.children)||[];return ch.length?famLabelFrom(ch):"Pais de "+nm(u)};
+const famAny=u=>{const ch=S.children.filter(c=>(c.guardians||[]).includes(u));return ch.length?"Pais do "+joinN(ch.map(c=>c.name)):"Pais de "+nm(u)};
 function bInfo(b){
   const n=new Date(),t0=new Date(n.getFullYear(),n.getMonth(),n.getDate());
   let y=t0.getFullYear(),B=new Date(y,b.month-1,b.day);if(B<t0){y++;B=new Date(y,b.month-1,b.day)}
@@ -213,9 +280,9 @@ function bInfo(b){
   const opts=[{id:"sportzone",text:"Vale-presente Sport Zone",by:""},...S.gopts.filter(o=>o.bday==b.id&&o.year==y)];
   const votes=S.gvotes.filter(v=>v.bday==b.id&&v.year==y),cnt={};votes.forEach(v=>cnt[v.opt]=(cnt[v.opt]||0)+1);
   const win=[...opts].sort((a,c)=>(cnt[c.id]||0)-(cnt[a.id]||0))[0],cs=S.contribs.filter(c=>c.gift==key);
-  return{b,y,B,d,phase,key,opts,cnt,votes,win,cs,myVote:(votes.find(v=>v.uid==uid)||{}).opt,myContrib:cs.some(c=>c.uid==uid),p1Open:addD(B,-10),p1Close:addD(B,-6),p2Close:addD(B,-3)};
+  return{b,y,B,d,phase,key,opts,cnt,votes,win,cs,myVote:(votes.find(v=>v.uid==uid)||{}).opt,myContrib:cs.some(c=>c.uid==uid),hhVote:votes.some(v=>hhSet().has(v.uid)),hhContrib:cs.some(c=>hhSet().has(c.uid)),p1Open:addD(B,-10),p1Close:addD(B,-6),p2Close:addD(B,-3)};
 }
-const pendList=()=>uid?S.bdays.map(bInfo).filter(i=>(i.phase=="p1"&&!i.myVote)||(i.phase=="p2"&&!i.myContrib)):[];
+const pendList=()=>uid?S.bdays.map(bInfo).filter(i=>(i.phase=="p1"&&!i.hhVote)||(i.phase=="p2"&&!i.hhContrib)):[];
 const pendingCount=()=>pendList().length;
 function alertsHtml(){
   return pendList().map(i=>{const u=i.d==7||i.d==4,p1=i.phase=="p1";
@@ -238,7 +305,7 @@ function prendas(){
     }else{
       body=`<div class="mu" style="margin-top:6px">🎁 Presente escolhido: <b>${esc(i.win.text)}</b>${i.votes.length?"":" (por omissão)"}</div>`;
       body+=phase=="p2"?`<div class="mu" style="margin:6px 0">🤝 Quem quer contribuir · último dia: ${fmtM(addD(i.p2Close,-1))}${d==4?" · ⏰ encerra em 24h":""}</div><button class="b ${i.myContrib?"o":""}" data-a="gcontrib" data-k="${key}">${i.myContrib?"Retirar a minha contribuição":"Quero contribuir"}</button>`:`<div class="mu" style="margin:6px 0">Contribuições encerradas.</div>`;
-      body+=`<div class="chips">${i.cs.map(c=>`<span class="chip">${esc(famAny(c.uid))}</span>`).join("")||'<span class="mu">Ninguém indicou contribuição.</span>'}</div>`;
+      body+=`<div class="chips">${[...new Set(i.cs.map(c=>famAny(c.uid)))].map(l=>`<span class="chip">${esc(l)}</span>`).join("")||'<span class="mu">Ninguém indicou contribuição.</span>'}</div>`;
     }
     const msg=phase=="p1"?`🎂 Aniversário do ${b.name} a ${fmtM(i.B)}! Está aberta a votação do presente${d==7?" (encerra em 24h!)":""}: ${location.href}`:phase=="p2"?`🎁 Presente do ${b.name}: ${i.win.text}. Quem quer contribuir? Indicar na app${d==4?" (encerra em 24h!)":""}: ${location.href}`:"";
     const adm=isAdmin?`<details><summary>Admin</summary>${msg?`<div class="mu">Mensagem para o grupo de WhatsApp:</div><textarea readonly rows="3">${esc(msg)}</textarea>`:""}<button class="b r" data-a="del" data-c="bdays" data-id="${b.id}">Apagar aniversário</button></details>`:"";
@@ -248,7 +315,7 @@ function prendas(){
 /* ---------- PEDIDOS DE PÃO ---------- */
 const OPTS=["simples","manteiga","queijo","fiambre"],openP=new Set();
 const conv=(g,c)=>(g.players||"").split(/[\n,]+/).some(s=>norm(s.trim())==norm(c.name));
-const prefId=(gid,c)=>gid+"__"+uid+"__"+slug(c.name);
+const prefId=(gid,c)=>gid+"__"+(c.id||slug(c.name));
 function prefBlock(g){
   if(!uid)return "";
   return myKids().map((c,i)=>{if(!conv(g,c))return "";
@@ -289,7 +356,7 @@ function gameCard(g){
   ${pl.length?`<div class="mu" style="margin-top:8px">Convocados (${pl.length})</div><div class="chips">${pl.map(p=>`<span class="chip">${esc(p)}</span>`).join("")}</div>`:`<div class="mu" style="margin:8px 0">Convocatória ainda não publicada.</div>`}
   ${g.notes?`<div class="mu" style="margin-top:6px">ℹ️ ${esc(g.notes)}</div>`:""}
   ${done?"":`<div class="row" style="margin-top:6px"><span>🥖 Pães: <b>${b?esc(kidLabel(b)):"ninguém ainda"}</b></span>
-  ${b?((b.uid==uid||isAdmin)?`<button class="b o" data-a="bread" data-id="${g.id}">Desistir</button>`:""):`<button class="b" data-a="bread" data-id="${g.id}">Eu levo</button>`}</div>`}
+  ${b?((b.uid==uid||isAdmin||(b.kids||[]).some(k=>myKids().some(c=>c.id==k)))?`<button class="b o" data-a="bread" data-id="${g.id}">Desistir</button>`:""):`${breadBtn(g)}`}</div>`}
   ${done?"":prefBlock(g)}
   ${isAdmin?`<details><summary>Editar (admin)</summary>
    <textarea id="pl-${g.id}" rows="4" placeholder="Convocados (um por linha)">${esc(g.players||"")}</textarea>
@@ -386,7 +453,7 @@ function admin(){
    <label class="mu">Cor principal</label><input id="s-color" type="color" value="${esc(st.color||"#1d6fd1")}" style="height:44px">
    <label class="mu">Logotipo</label><input id="s-logo" type="file" accept="image/*">
    <button class="b" data-a="saveSettings">Guardar</button></div>
-  <div class="card"><b>👥 Pedidos de acesso</b>${(S.pending||[]).length?(S.pending||[]).map(p=>`<div class="row" style="margin-top:8px"><span>${esc(p.name||"(sem nome)")}<br><span class="mu">${esc(p.email)}${p.role=="blocked"?" · recusado":""}</span></span><span><button class="b" data-a="approve" data-id="${p.id}">Aprovar</button> <button class="b o" data-a="reject" data-id="${p.id}">Recusar</button></span></div>`).join(""):'<div class="mu">Sem pedidos pendentes.</div>'}</div>
+  ${usersCard()}
   <div class="card"><b>🔒 Consentimentos RGPD (fotografias)</b><div class="mu" style="margin:6px 0">${S.consents.filter(c=>c.photos).length} aceitaram · ${S.consents.filter(c=>!c.photos).length} recusaram ou retiraram</div><div class="chips">${S.consents.map(c=>`<span class="chip">${c.photos?"✅":"❌"} ${esc(nm(c.id))} · ${new Date(c.t).toLocaleDateString("pt-PT")}</span>`).join("")}</div></div>
   <div class="card"><b>🥖 Histórico de pães</b><div class="mu">Para quem já levou pães antes do site. Uma linha por família: Nome(s) separados por +;Escalão;Equipa;Vezes. Ex.: Vasco Florêncio+Vicente Florêncio;Benjamins;B;3. Fica associado quando o pai/mãe registar o filho no Perfil.</div>
    <textarea id="kids-in" rows="3" placeholder="Rui Santos;Benjamins;B;2"></textarea><button class="b" data-a="addHist">Adicionar</button>
@@ -424,7 +491,11 @@ document.addEventListener("click",async e=>{
     if(a=="day"){sd=sd==t.dataset.k?"":t.dataset.k;return render()}
     if(a=="mm"){const[y,m]=cm.split("-").map(Number),d=new Date(y,m-1+(+t.dataset.k),1);cm=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");return render()}
     if(!db)return alert("É necessário iniciar sessão para participar.");
-    if(a=="bread"){const ex=S.bread.find(x=>x.id==id);if(ex)await db.collection("bread").doc(id).delete();else{const ek=myEk(S.games.find(x=>x.id==id)||{});if(!ek)return toast("Registe primeiro o seu filho/a deste escalão, no separador Perfil.");await db.collection("bread").doc(id).set({uid,ek,t:Date.now()})}}
+    if(a=="bread"){const ex=S.bread.find(x=>x.id==id);if(ex)await db.collection("bread").doc(id).delete();else{const g=S.games.find(x=>x.id==id)||{},el=eligible(g);
+      if(!el.length)return toast("Registe primeiro o seu filho/a deste escalão, no separador Perfil.");
+      let ids=el.map(c=>c.id);const box=document.getElementById("bk-"+id);
+      if(box){ids=[...box.querySelectorAll("input:checked")].map(x=>x.dataset.bk);if(!ids.length)return toast("Selecione pelo menos um menino.")}
+      await db.collection("bread").doc(id).set({uid,kids:ids,t:Date.now()})}}
     else if(a=="contrib")await toggle("contribs",id+"_"+uid,{gift:id,uid});
     else if(a=="vote")await db.collection("votes").doc(uid).set({venue:id});
     else if(a=="del"){const k=t.dataset.c+"/"+id;if(pend!=k){pend=k;setTimeout(()=>{if(pend==k)pend=""},4000);return toast("Toque outra vez para apagar")}pend="";await db.collection(t.dataset.c).doc(id).delete()}
@@ -438,12 +509,13 @@ document.addEventListener("click",async e=>{
       await db.collection("settings").doc("club").set({...S.settings,...d});alert("Guardado")}
     else if(a=="addKids"){for(const n of v("kids-in").split("\n").map(s=>s.trim()).filter(Boolean))if(!knownKid(n))await db.collection("kids").doc(slug(n)).set({name:n});$("#kids-in").value=""}
     else if(a=="bulk"){let n=0;for(const ln of v("bulk").split("\n")){const p=ln.split(";").map(s=>s.trim());if(p.length<2||!/^\d{4}-\d\d-\d\d$/.test(p[1]))continue;const team=p[0].toUpperCase(),r=db.collection("games").doc(team+"-"+p[1]);if(false)continue;const ex=(await r.get()).exists,sc=p[5]!==undefined&&p[5]!==""&&p[6]!==undefined&&p[6]!=="";if(ex){if(sc){await r.update({gf:p[5],ga:p[6]});n++}continue}await r.set({team,cat:"Benjamins",date:p[1],time:p[2]||"",opp:p[3]||"",venue:p[4]||"",home:p[7]!="fora",players:"",gf:sc?p[5]:"",ga:sc?p[6]:""});n++}alert(n+" jogos adicionados/atualizados")}
-    else if(a=="addChild"){const nome=v("c-name").trim(),cat=v("c-cat");if(!nome||!cat)return toast("Indique o nome e o escalão.");await db.collection("families").doc(uid).set({children:[...myKids(),{name:nome,cat}]});$("#c-name").value=""}
-    else if(a=="delChild"){const i=+t.dataset.i,k="c"+i;if(pend!=k){pend=k;setTimeout(()=>{if(pend==k)pend=""},4000);return toast("Toque outra vez para remover")}pend="";await db.collection("families").doc(uid).set({children:myKids().filter((_,j)=>j!=i)})}
+    else if(a=="addChildOld"){const nome=v("c-name").trim(),cat=v("c-cat");if(!nome||!cat)return toast("Indique o nome e o escalão.");await db.collection("families").doc(uid).set({children:[...myKids(),{name:nome,cat}]});$("#c-name").value=""}
+    else if(a=="delChildOld"){const i=+t.dataset.i,k="c"+i;if(pend!=k){pend=k;setTimeout(()=>{if(pend==k)pend=""},4000);return toast("Toque outra vez para remover")}pend="";await db.collection("families").doc(uid).set({children:myKids().filter((_,j)=>j!=i)})}
     else if(a=="addHist"){let n=0;for(const ln of v("kids-in").split("\n")){const p=ln.split(";").map(s=>s.trim());if(p.length<4||!p[0]||!(+p[3]))continue;const names=p[0].split("+").map(s=>s.trim()).filter(Boolean),ek=cekey(p[1],p[2]);await db.collection("kids").doc(slug(names.join("-"))+"-"+ek).set({name:joinN(names),alias:names,cat:p[1],team:p[2].toUpperCase(),ek,base:+p[3]});n++}toast(n+" registos adicionados");$("#kids-in").value=""}
     else if(a=="gvote"){const {b,y,o}=t.dataset;await db.collection("gvotes").doc(b+"_"+y+"_"+uid).set({bday:b,year:+y,opt:o,uid})}
     else if(a=="gcontrib"){const k=t.dataset.k;await toggle("contribs",k+"_"+uid,{gift:k,uid})}
     else if(a=="gsug"){const {b,y}=t.dataset,tx=v("sg-"+b).trim();if(!tx)return toast("Escreva a sugestão.");await db.collection("gopts").doc(id8()).set({bday:b,year:+y,text:tx,by:uid});$("#sg-"+b).value=""}
+    else if(a=="mkadmin"||a=="rmadmin"){const k=a+id;if(pend!=k){pend=k;setTimeout(()=>{if(pend==k)pend=""},4000);return toast(a=="mkadmin"?"Toque outra vez para dar permissões de administrador":"Toque outra vez para retirar as permissões")}pend="";const {error}=await sb.rpc("set_role",{target:id,new_role:a=="mkadmin"?"admin":"member"});if(error)throw error;await loadPending();toast("Permissões atualizadas.")}
     else if(a=="approve"||a=="reject"){const {error}=await sb.rpc("set_role",{target:id,new_role:a=="approve"?"member":"blocked"});if(error)throw error;await loadPending()}
     else if(a=="cShow"){showC=true;render()}
     else if(a=="cYes"){if(!document.getElementById("c-resp")||!document.getElementById("c-resp").checked)return toast("Confirme que é encarregado(a) de educação.");await db.collection("consents").doc(uid).set({photos:true,v:CONSENT_V,t:Date.now()});showC=false;render();toast("Consentimento registado.")}
@@ -451,6 +523,15 @@ document.addEventListener("click",async e=>{
     else if(a=="cWithdraw"){if(pend!="cw"){pend="cw";setTimeout(()=>{if(pend=="cw")pend=""},4000);return toast("Toque outra vez: retira o consentimento e apaga as suas fotografias")}pend="";
       for(const p of S.photos.filter(p=>p.uid==uid)){await db.collection("photos").doc(p.id).delete();try{if(assets)await assets.delete(p.asset)}catch(e){}}
       await db.collection("consents").doc(uid).set({photos:false,v:CONSENT_V,t:Date.now()});render()}
+    else if(a=="addChild"){const nome=v("c-name").trim(),cat=v("c-cat");if(!nome||!cat)return toast("Indique o nome e o escalão.");
+      const dup=S.children.find(c=>norm(c.name)==norm(nome)&&canon(c.cat)==canon(cat));
+      if(dup)return toast((dup.guardians||[]).includes(uid)?"Este menino já está na sua lista.":"Este menino já está registado. Peça o código ao outro responsável e use «Associar».");
+      const code=newCode();await db.collection("children").doc("c-"+slug(nome)+"-"+code.toLowerCase()).set({name:nome,cat,code,guardians:[uid],t:Date.now()});$("#c-name").value=""}
+    else if(a=="joinChild"){const code=v("c-code").trim().toUpperCase();if(!code)return toast("Escreva o código.");
+      const r=window.joinChildRpc?await window.joinChildRpc(code):await joinLocal(code);toast(r?"Associado a "+r+".":"Código não encontrado.");$("#c-code").value=""}
+    else if(a=="unlink"){const k="u"+id;if(pend!=k){pend=k;setTimeout(()=>{if(pend==k)pend=""},4000);return toast("Toque outra vez para deixar de ser responsável por este menino")}pend="";
+      const c=S.children.find(x=>x.id==id);if(!c)return;const g=(c.guardians||[]).filter(u=>u!=uid);
+      if(g.length)await db.collection("children").doc(id).update({guardians:g});else await db.collection("children").doc(id).delete()}
     else if(a=="impSkip"){D.shift();render()}
     else if(a=="impSave"){
       const team=v("d-team").trim().toUpperCase(),date=v("d-date");if(!team||!date)return alert("Indique equipa e data.");
@@ -459,8 +540,8 @@ document.addEventListener("click",async e=>{
       s.exists?await r.update(o):await r.set({...o,gf:"",ga:""});
       D.shift();render()}
     else if(a=="upload"){if(!(myC&&myC.photos))return toast("É necessário o consentimento para fotografias.");
-      const fs=[...$("#up").files],m=$("#upmsg");if(!fs.length||!assets)return m.textContent=assets?"Escolha uma fotografia.":"Upload indisponível.";
-      for(const [i,f] of fs.entries()){m.textContent=`A enviar ${i+1}/${fs.length}…`;const r=await assets.upload(f);await db.collection("photos").doc(id8()).set({asset:r.id,uid,t:Date.now()})}
+      const cls=v("up-cls");if(!cls)return toast("Escolha o jogo ou a categoria das fotografias.");const fs=[...$("#up").files],m=$("#upmsg");if(!fs.length||!assets)return m.textContent=assets?"Escolha uma fotografia.":"Upload indisponível.";
+      for(const [i,f] of fs.entries()){m.textContent=`A enviar ${i+1}/${fs.length}…`;const r=await assets.upload(f);await db.collection("photos").doc(id8()).set({asset:r.id,uid,t:Date.now(),game:cls.startsWith("g:")?cls.slice(2):"",cat:cls.startsWith("c:")?cls.slice(2):""})}
       m.textContent="Enviado ✓"}
   }catch(err){alert("Não foi possível concluir: "+(err.message||err.code||err))}
 });
@@ -513,46 +594,71 @@ document.addEventListener("change",async e=>{
 /* ---------- SUPABASE (camada de dados) ---------- */
 const SB_URL="https://zoyogpdoivqmeuvrzljs.supabase.co",SB_KEY="sb_publishable_pdG0F-BMXktq9fzDSFGENg_zlMXPy4a";
 const sb=supabase.createClient(SB_URL,SB_KEY);
-let SESS=null,ROLE="";window.HOLD=true;
+let SESS=null,ROLE="",CLUB=null;window.HOLD=true;
 function screen(h){window.HOLD=true;$("#nav").innerHTML="";$("#view").innerHTML=h}
-function showLogin(msg){screen(`<div class="card"><b>Entrar</b><div class="mu" style="margin:6px 0">Indique o seu email. Enviamos-lhe um link de acesso (sem palavra-passe).</div><input id="lg-mail" type="email" placeholder="email@exemplo.pt" autocomplete="email"><button class="b" id="lg-go">Enviar link</button><div id="lg-msg" class="mu" style="margin-top:8px">${msg||""}</div></div>`);
+function showLogin(msg){try{const c=JSON.parse(localStorage.getItem("club")||"null");if(c)applyClub(c.settings||{})}catch(e){}screen(`<div class="card"><b>Entrar</b><div class="mu" style="margin:6px 0">Indique o seu email. Enviamos-lhe um link de acesso (sem palavra-passe).</div><input id="lg-mail" type="email" placeholder="email@exemplo.pt" autocomplete="email"><button class="b" id="lg-go">Enviar link</button><div id="lg-msg" class="mu" style="margin-top:8px">${msg||""}</div></div>`);
   $("#lg-go").onclick=async()=>{const e=$("#lg-mail").value.trim();if(!e)return;$("#lg-go").disabled=true;
     const {error}=await sb.auth.signInWithOtp({email:e,options:{emailRedirectTo:location.origin+location.pathname}});
     $("#lg-msg").textContent=error?"Erro: "+error.message:"Link enviado! Abra o email neste telemóvel e toque no link.";$("#lg-go").disabled=false}}
 function showName(){screen(`<div class="card"><b>Bem-vindo(a)!</b><div class="mu" style="margin:6px 0">Como se chama? (Aparece ao administrador e nas contribuições.)</div><input id="nm-in" placeholder="O seu nome"><button class="b" id="nm-go">Continuar</button></div>`);
   $("#nm-go").onclick=async()=>{const n=$("#nm-in").value.trim();if(!n)return;const {error}=await sb.rpc("set_my_name",{n});if(error)return toast(error.message);location.reload()}}
+function applyClub(st){document.documentElement.style.setProperty("--pri",st.color||"#1d6fd1");$("#cname").textContent=st.name||"Espaço dos Pais";const lg=$("#logo");if(st.logo){lg.src=img(st.logo);lg.hidden=false}else lg.hidden=true}
+async function showClubs(){
+  const {data}=await sb.from("clubs").select("id,name,settings").order("name");
+  screen(`<div class="card"><b>Escolha o seu clube</b><div class="mu" style="margin:6px 0">O administrador do clube terá de aprovar o seu acesso.</div>${(data||[]).map(c=>`<button class="b o" data-club="${c.id}" style="display:flex;align-items:center;gap:10px;width:100%;margin-top:8px;text-align:left">${c.settings&&c.settings.logo?`<img src="${img(c.settings.logo)}" alt="" style="width:32px;height:32px;border-radius:6px;object-fit:cover">`:""}<span>${esc(c.name)}</span></button>`).join("")||'<div class="mu">Ainda não há clubes registados.</div>'}</div>`);
+  document.querySelectorAll("[data-club]").forEach(b=>b.onclick=async()=>{const {error}=await sb.rpc("join_club",{club:b.dataset.club});if(error)return toast(error.message);location.reload()});
+}
 async function boot(){
   const {data:{session}}=await sb.auth.getSession();
   if(!session){showLogin();return false}
   SESS=session;let prof=null;
   for(let i=0;i<5&&!prof;i++){const r=await sb.from("profiles").select("*").eq("id",session.user.id).maybeSingle();prof=r.data;if(!prof)await new Promise(r=>setTimeout(r,700))}
   if(!prof){screen('<div class="empty">Não foi possível carregar o perfil. Atualize a página.</div>');return false}
+  if(!prof.club_id){await showClubs();return false}
+  CLUB=prof.club_id;
+  const {data:club}=await sb.from("clubs").select("id,name,settings").eq("id",CLUB).maybeSingle();
+  S.settings=(club&&club.settings)||{};applyClub(S.settings);
+  try{localStorage.setItem("club",JSON.stringify({id:CLUB,settings:S.settings}))}catch(e){}
   if(!prof.name){showName();return false}
   if(prof.role=="pending"||prof.role=="blocked"){screen(`<div class="card"><b>A aguardar aprovação</b><div class="mu" style="margin:6px 0">Olá, ${esc(prof.name)}! O administrador do clube ainda tem de aprovar o seu acesso${prof.role=="blocked"?" (pedido recusado)":""}.</div><button class="b o" id="lo">Terminar sessão</button></div>`);
     $("#lo").onclick=()=>sb.auth.signOut().then(()=>location.reload());return false}
   ROLE=prof.role;
-  user={id:async()=>session.user.id,canEdit:()=>ROLE=="admin",profiles:async ids=>{const {data}=await sb.rpc("get_names",{ids});const o={};(data||[]).forEach(r=>o[r.id]={name:r.name});return o}};
-  db=mkDb();assets={
+  user={id:async()=>session.user.id,canEdit:()=>ROLE=="admin"||ROLE=="owner",profiles:async ids=>{const {data}=await sb.rpc("get_names",{ids});const o={};(data||[]).forEach(r=>o[r.id]={name:r.name});return o}};
+  db=mkDb();window.joinChildRpc=async code=>{const {data,error}=await sb.rpc("join_child",{code});if(error)throw error;return data};assets={
     async upload(file,kind){const ext=((file.name.split(".").pop()||"jpg")+"").toLowerCase().replace(/[^a-z0-9]/g,""),rnd=crypto.randomUUID();
-      if(kind=="logo"){const p=`logo-${rnd}.${ext}`,{error}=await sb.storage.from("club").upload(p,file,{contentType:file.type});if(error)throw error;return{id:"pub:"+p}}
-      const p=`${session.user.id}/${rnd}.${ext}`,{error}=await sb.storage.from("photos").upload(p,file,{contentType:file.type});if(error)throw error;return{id:p}},
+      if(kind=="logo"){const p=`${CLUB}/logo-${rnd}.${ext}`,{error}=await sb.storage.from("club").upload(p,file,{contentType:file.type});if(error)throw error;return{id:"pub:"+p}}
+      const p=`${CLUB}/${session.user.id}/${rnd}.${ext}`,{error}=await sb.storage.from("photos").upload(p,file,{contentType:file.type});if(error)throw error;return{id:p}},
     async delete(id){if(id&&!id.startsWith("pub:"))await sb.storage.from("photos").remove([id])}};
   window.HOLD=false;return true;
 }
-async function loadPending(){const {data}=await sb.from("profiles").select("id,name,email,role").in("role",["pending","blocked"]).order("created_at");S.pending=data||[];render()}
+async function loadPending(){const {data}=await sb.from("profiles").select("id,name,email,role,created_at").order("created_at");S.people=data||[];S.pending=S.people.filter(p=>p.role=="pending"||p.role=="blocked");render()}
+function usersCard(){
+  const P=S.people||[],own=ROLE=="owner";
+  const row=(p,b)=>`<div class="row" style="margin-top:8px"><span>${esc(p.name||"(sem nome)")}<br><span class="mu">${esc(p.email)}</span></span><span>${b}</span></div>`;
+  const pd=P.filter(p=>p.role=="pending"||p.role=="blocked"),ad=P.filter(p=>p.role=="admin"||p.role=="owner"),mb=P.filter(p=>p.role=="member");
+  return `<div class="card"><b>👥 Pedidos de acesso</b>${pd.map(p=>row(p,`<button class="b" data-a="approve" data-id="${p.id}">Aprovar</button> ${p.role=="blocked"?"":`<button class="b o" data-a="reject" data-id="${p.id}">Recusar</button>`}`)).join("")||'<div class="mu">Sem pedidos pendentes.</div>'}</div>
+  <div class="card"><b>🛡️ Administradores</b>${ad.map(p=>row(p,p.role=="owner"?'<span class="tag">Principal</span>':(own?`<button class="b o" data-a="rmadmin" data-id="${p.id}">Remover</button>`:'<span class="tag">Admin</span>'))).join("")}
+  ${own?`<div class="mu" style="margin-top:12px">Tornar administrador (só o administrador principal pode):</div>${mb.map(p=>row(p,`<button class="b" data-a="mkadmin" data-id="${p.id}">Tornar admin</button>`)).join("")||'<div class="mu">Ainda não há pais aprovados.</div>'}`:'<div class="mu" style="margin-top:8px">Só o administrador principal pode atribuir ou retirar permissões de administração.</div>'}</div>`;
+}
 function mkDb(){
-  const live=(name,load)=>{let alive=true;const run=()=>{if(alive)load()};run();
-    const ch=sb.channel("rt-"+name+"-"+Math.random().toString(36).slice(2)).on("postgres_changes",{event:"*",schema:"public",table:"docs",filter:"collection=eq."+name},run).subscribe();
+  const live=(table,filter,load)=>{let alive=true;const run=()=>{if(alive)load()};run();
+    const ch=sb.channel("rt-"+table+"-"+Math.random().toString(36).slice(2)).on("postgres_changes",{event:"*",schema:"public",table,filter},run).subscribe();
     return()=>{alive=false;sb.removeChannel(ch)}};
-  return{collection:name=>({
+  const settingsDoc=()=>({
+    async get(){const {data}=await sb.from("clubs").select("settings").eq("id",CLUB).maybeSingle();const st=data&&data.settings&&Object.keys(data.settings).length?data.settings:null;return{exists:!!st,id:"club",data:()=>st||undefined}},
+    async set(d){const {error}=await sb.from("clubs").update({settings:d,...(d.name?{name:d.name}:{})}).eq("id",CLUB);if(error)throw error;try{localStorage.setItem("club",JSON.stringify({id:CLUB,settings:d}))}catch(e){}},
+    async update(d){const c=await this.get();return this.set({...(c.exists?c.data():{}),...d})},
+    async delete(){},
+    onSnapshot(cb){return live("clubs","id=eq."+CLUB,async()=>cb(await this.get()))}});
+  return{collection:name=>name=="settings"?{doc:()=>settingsDoc()}:({
     doc:id=>({
-      async get(){const {data}=await sb.from("docs").select("data").eq("collection",name).eq("id",id).maybeSingle();return{exists:!!data,id,data:()=>data?data.data:undefined}},
-      async set(d){const {error}=await sb.from("docs").upsert({collection:name,id,data:d});if(error)throw error},
-      async update(d){const c=await this.get();const {error}=await sb.from("docs").upsert({collection:name,id,data:{...(c.exists?c.data():{}),...d}});if(error)throw error},
-      async delete(){const {error}=await sb.from("docs").delete().eq("collection",name).eq("id",id);if(error)throw error},
-      onSnapshot(cb,err){return live(name,async()=>{const {data,error}=await sb.from("docs").select("data").eq("collection",name).eq("id",id).maybeSingle();
+      async get(){const {data}=await sb.from("docs").select("data").eq("club_id",CLUB).eq("collection",name).eq("id",id).maybeSingle();return{exists:!!data,id,data:()=>data?data.data:undefined}},
+      async set(d){const {error}=await sb.from("docs").upsert({club_id:CLUB,collection:name,id,data:d},{onConflict:"club_id,collection,id"});if(error)throw error},
+      async update(d){const c=await this.get();const {error}=await sb.from("docs").upsert({club_id:CLUB,collection:name,id,data:{...(c.exists?c.data():{}),...d}},{onConflict:"club_id,collection,id"});if(error)throw error},
+      async delete(){const {error}=await sb.from("docs").delete().eq("club_id",CLUB).eq("collection",name).eq("id",id);if(error)throw error},
+      onSnapshot(cb,err){return live("docs","collection=eq."+name,async()=>{const {data,error}=await sb.from("docs").select("data").eq("club_id",CLUB).eq("collection",name).eq("id",id).maybeSingle();
         if(error){err&&err(error);return}cb({exists:!!data,id,data:()=>data?data.data:undefined})})}}),
-    onSnapshot(cb,err){return live(name,async()=>{const {data,error}=await sb.from("docs").select("id,data").eq("collection",name);
+    onSnapshot(cb,err){return live("docs","collection=eq."+name,async()=>{const {data,error}=await sb.from("docs").select("id,data").eq("club_id",CLUB).eq("collection",name);
       if(error){err&&err(error);return}cb({docs:data.map(r=>({id:r.id,data:()=>r.data}))})})}})};
 }
 
@@ -567,7 +673,7 @@ function sub(col,key,fn){
     if(user){uid=await user.id();isAdmin=user.canEdit()}
     if(!db){$("#view").innerHTML='<div class="empty">Inicie sessão para ver o espaço dos pais.</div>';return}
     db.collection("settings").doc("club").onSnapshot(s=>{S.settings=s.exists?s.data():{};render()});
-    [["bdays","bdays"],["gopts","gopts"],["gvotes","gvotes"],["prefs","prefs"],["families","fams"],["kids","kids"],["games","games"],["gifts","gifts"],["contribs","contribs"],["venues","venues"],["votes","votes"],["bread","bread"],["photos","photos"]].forEach(([c,k])=>sub(c,k));
+    [["bdays","bdays"],["gopts","gopts"],["gvotes","gvotes"],["prefs","prefs"],["children","children"],["families","fams"],["kids","kids"],["games","games"],["gifts","gifts"],["contribs","contribs"],["venues","venues"],["votes","votes"],["bread","bread"],["photos","photos"]].forEach(([c,k])=>sub(c,k,k=="fams"?migrateLegacy:k=="children"?()=>{childrenReady=true;migrateLegacy()}:null));
     if(uid)db.collection("consents").doc(uid).onSnapshot(s=>{myC=s.exists?s.data():null;render()},()=>{});
     if(isAdmin){sub("consents","consents");loadPending()}
     setTimeout(()=>{if($("#view").textContent=="A carregar…")render()},10000);
