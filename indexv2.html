@@ -349,6 +349,15 @@ function mainEditor(g){
 let sgConf="";
 const SG_NEED=2,SG_NOTE="Ao assumir a função de segurança do jogo, deverá fazer-se acompanhar da sua identificação pessoal.";
 const gIsHome=g=>g.home!==false,gIsDone=g=>g.gf!==undefined&&g.gf!==""&&g.gf!==null;
+const sgPanel=g=>`<div class="card" style="border-color:#e67e22;margin:10px 0 0"><b>⚠️ Antes de confirmar</b><div style="margin:6px 0">${SG_NOTE}</div><div class="row"><button class="b" data-a="sgYes" data-g="${g.id}">Confirmar candidatura</button><button class="b o" data-a="sgNo">Cancelar</button></div></div>`;
+function sgInline(g){
+  const apps=S.guardapps.filter(a=>a.game==g.id),sel=g.guards||[],applied=apps.some(a=>a.uid==uid),isSel=sel.includes(uid),full=sel.length>=SG_NEED;
+  const st=`${full?"✅":"🛡️"} Seguranças: <b>${sel.length}/${SG_NEED}</b> selecionados`;
+  const sub=`${apps.length} candidato${apps.length==1?"":"s"}${full?" · vagas preenchidas":(sel.length?` · faltam ${SG_NEED-sel.length}`:` · faltam ${SG_NEED}`)}`;
+  const act=sgConf==g.id?"":isSel?'<span class="chip" style="background:#2e7d32;color:#fff">Está selecionado</span>'
+    :applied?`<span style="display:flex;gap:6px;align-items:center"><span class="mu">✓ Candidatou-se</span><button class="b o" data-a="sgWd" data-g="${g.id}" style="padding:6px 10px">Retirar</button></span>`
+    :full?'<span class="mu">Vagas preenchidas</span>':`<button class="b" data-a="sgAsk" data-g="${g.id}">Candidatar-me a Segurança</button>`;
+  return `<div class="row" style="margin-top:6px"><span>${st}<br><span class="mu">${sub}</span></span>${act}</div>${sgConf==g.id?sgPanel(g):""}`}
 function guards(){
   const key=g=>(g.date||"")+(g.time||""),hg=S.games.filter(gIsHome);
   const up=hg.filter(g=>!gIsDone(g)).sort((a,b)=>key(a).localeCompare(key(b)));
@@ -362,8 +371,7 @@ function guards(){
       return `<div class="row" style="padding:6px 0;border-top:1px solid var(--bd)"><span>${esc(nm(u))} ${isSel?'<span class="chip" style="background:#2e7d32;color:#fff">Selecionado</span>':'<span class="chip">Candidato</span>'}</span>
        <span>${app&&u!=uid?`<button class="b ${votes.some(x=>x.cand==u&&x.voter==uid)?"":"o"}" data-a="sgVote" data-g="${g.id}" data-u="${u}" style="padding:6px 10px">👍 ${cnt(u)}</button>`:`<span class="mu">👍 ${cnt(u)}</span>`}
        ${canManage()?(isSel?`<button class="b o" data-a="sgUnsel" data-g="${g.id}" data-u="${u}" style="padding:6px 10px">Remover</button>`:`<button class="b" data-a="sgSel" data-g="${g.id}" data-u="${u}" style="padding:6px 10px">${sel.length>=SG_NEED?(isAdmin?"Selecionar (exceção)":"Completo"):"Selecionar"}</button>`):""}</span></div>`}).join("")||'<div class="mu">Ainda sem candidatos.</div>';
-    const act=sgConf==g.id?`<div class="card" style="border-color:#e67e22;margin:10px 0 0"><b>⚠️ Antes de confirmar</b><div style="margin:6px 0">${SG_NOTE}</div><div class="row"><button class="b" data-a="sgYes" data-g="${g.id}">Confirmar candidatura</button><button class="b o" data-a="sgNo">Cancelar</button></div></div>`
-      :applied?`<button class="b o" data-a="sgWd" data-g="${g.id}" style="margin-top:8px">Retirar a minha candidatura</button>`:`<button class="b" data-a="sgAsk" data-g="${g.id}" style="margin-top:8px">Candidatar-me a segurança</button>`;
+    const act=sgConf==g.id?sgPanel(g):applied?`<button class="b o" data-a="sgWd" data-g="${g.id}" style="margin-top:8px">Retirar a minha candidatura</button>`:(sel.length>=SG_NEED?`<div class="mu" style="margin-top:8px">✅ Vagas preenchidas: não há novas candidaturas.</div>`:`<button class="b" data-a="sgAsk" data-g="${g.id}" style="margin-top:8px">Candidatar-me a segurança</button>`);
     const head=`<div class="row"><span>${gtitle(g)}</span>${st}</div><div class="mu">${esc(fmtD(g.date,g.time))}${g.venue?" · 📍 "+esc(g.venue):""}</div>`;
     if(hist)return `<div class="card">${head}<div class="mu" style="margin-top:4px">Seguranças: ${esc(sel.map(u=>nm(u)).join(", ")||"—")}</div><div class="mu">Candidatos: ${esc(apps.map(a=>nm(a.uid)).join(", ")||"—")}</div></div>`;
     return `<div class="card">${head}<div style="margin-top:6px">${rows}</div>${act}${myV>=2?'<div class="mu" style="margin-top:6px">Já usou os 2 votos deste jogo.</div>':""}</div>`};
@@ -465,7 +473,7 @@ function pubRender(){
   const [y,mo]=PUB.cm.split("-").map(Number),nd=new Date(y,mo,0).getDate(),WD=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
   const by={};PUB.rows.forEach(g=>(by[g.date]=by[g.date]||[]).push(g));
   const srt=(a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||""));
-  const line=g=>`<div style="padding-top:8px;margin-top:8px;border-top:1px solid var(--bd)"><div class="row" style="flex-wrap:nowrap;align-items:flex-start"><span style="flex:1">${gtitle(g)}</span><span class="tag" style="${g.team=="B"?"background:#e67e22":""}">${esc(g.team)}</span></div><div class="mu"><b>${WD[new Date(g.date+"T12:00").getDay()]} ${esc(g.time||"")}</b></div>${g.venue?`<div class="mu">📍 <a href="#" data-a="venue" data-v="${esc(g.venue)}" style="color:var(--pri)">${esc(g.venue)}</a></div>`:'<div class="mu">📍 Local a definir</div>'}</div>`;
+  const line=g=>`<div style="padding-top:8px;margin-top:8px;border-top:1px solid var(--bd)"><div class="row" style="flex-wrap:nowrap;align-items:flex-start"><span style="flex:1">${gtitle(g)}</span><span class="tag" style="${g.team=="B"?"background:#e67e22":""}">${esc(g.team)}</span></div><div class="mu"><b>${WD[new Date(g.date+"T12:00").getDay()]} ${esc(g.time||"")}</b></div>${g.venue?`<div class="mu">📍 <a href="#" data-a="venue" data-v="${esc(g.venue)}" style="color:var(--pri)">${esc(g.venue)}</a></div>`:'<div class="mu">📍 Local a definir</div>'}${g.home!==false&&g.date>=isoD(new Date())?`<button class="b o" data-a="sgLogin" style="margin-top:6px;padding:6px 10px">Candidatar-me a Segurança</button>`:""}</div>`;
   const sats=new Set();for(let d=1;d<=nd;d++){const w=new Date(y,mo-1,d).getDay();if(w==6)sats.add(d);else if(w==0)sats.add(d-1)}
   const f=d=>d.toLocaleDateString("pt-PT",{day:"numeric",month:"short"});
   const blocks=[...sats].sort((a,b)=>a-b).map(s=>{const sa=new Date(y,mo-1,s),su=new Date(y,mo-1,s+1),gl=[...(by[isoD(sa)]||[]),...(by[isoD(su)]||[])].sort(srt);
@@ -620,6 +628,7 @@ function gameCard(g){
   ${done||g.home!==false?"":`<div class="row" style="margin-top:6px"><span>🥖 Pães: <b>${b?esc(kidLabel(b)):"ninguém ainda"}</b></span>
   ${b?((b.uid==uid||isAdmin||(b.kids||[]).some(k=>myKids().some(c=>c.id==k)))?`<button class="b o" data-a="bread" data-id="${g.id}">Desistir</button>`:""):`${breadBtn(g)}`}</div>`}
   ${done||g.home!==false?"":prefBlock(g)}
+  ${!done&&gIsHome(g)?sgInline(g):""}
   ${canManage()?mainEditor(g):""}
   ${canManage()?`<details><summary>Editar resultado e convocatória</summary>
    <textarea id="pl-${g.id}" rows="4" placeholder="Convocados (um por linha)">${esc(g.players||"")}</textarea>
@@ -753,6 +762,7 @@ document.addEventListener("click",async e=>{
     if(a=="venue"){e.preventDefault();return openVenue(t.dataset.v)}
     if(a=="pubm"){const [y,m]=PUB.cm.split("-").map(Number),d=new Date(y,m-1+(+t.dataset.k),1);PUB.cm=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");return pubRender()}
     if(a=="pubc"){PUBWANT=t.dataset.id;return loadPublic()}
+    if(a=="sgLogin"){const m=document.getElementById("lg-msg");if(m)m.textContent="Inicie sessão para se candidatar a segurança dos jogos.";window.scrollTo({top:0,behavior:"smooth"});const i=document.getElementById("lg-mail");if(i)i.focus();return}
     if(a=="tab"){hideAsk();tab=t.dataset.k;return render()}
     if(a=="jv"){jv=t.dataset.k;return render()}
     if(a=="fm"){fm=t.dataset.k;return render()}
@@ -812,9 +822,10 @@ document.addEventListener("click",async e=>{
     else if(a=="sgYes"){const g=S.games.find(x=>x.id==t.dataset.g);if(!g)return;
       if(!gIsHome(g)){sgConf="";render();return toast("Só há seguranças nos jogos em casa.")}if(gIsDone(g)){sgConf="";render();return toast("Este jogo já foi realizado.")}
       const aid=g.id+"__"+uid;if(S.guardapps.some(x=>x.id==aid)){sgConf="";render();return toast("Já se candidatou a este jogo.")}
-      await db.collection("guardapps").doc(aid).set({game:g.id,uid,t:Date.now()});sgConf="";render();toast("Candidatura registada.")}
+      if((g.guards||[]).length>=SG_NEED){sgConf="";render();return toast("As vagas de segurança estão preenchidas.")}
+      await db.collection("guardapps").doc(aid).set({game:g.id,uid,t:Date.now()});S.guardapps.push({id:aid,game:g.id,uid,t:Date.now()});sgConf="";render();toast("Candidatura registada.")}
     else if(a=="sgWd"){const g=S.games.find(x=>x.id==t.dataset.g);if(!g)return;if((g.guards||[]).includes(uid))return toast("Já está selecionado: fale com o administrador para sair.");
-      await db.collection("guardapps").doc(g.id+"__"+uid).delete();toast("Candidatura retirada.")}
+      await db.collection("guardapps").doc(g.id+"__"+uid).delete();S.guardapps=S.guardapps.filter(x=>x.id!=g.id+"__"+uid);render();toast("Candidatura retirada.")}
     else if(a=="sgVote"){const g=t.dataset.g,u=t.dataset.u,vid=g+"__"+u+"__"+uid;if(u==uid)return toast("Não pode votar em si próprio.");
       if(!S.guardvotes.some(x=>x.id==vid)&&S.guardvotes.filter(x=>x.game==g&&x.voter==uid).length>=2)return toast("Só pode votar em 2 candidatos por jogo.");
       await toggle("guardvotes",vid,{game:g,cand:u,voter:uid})}
